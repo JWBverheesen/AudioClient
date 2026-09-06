@@ -1,10 +1,14 @@
 package com.example.audioclient.ui
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -31,15 +35,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 
 import com.example.audioclient.R
 
-// PLACEFOLDER
-fun refresh() {
-
-}
-
-fun clearError() {
-
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AudioClientApp(
@@ -59,7 +54,7 @@ fun AudioClientApp(
             TopAppBar(
                 title = { Text("Audio Server") },
                 actions = {
-                    IconButton(onClick = { refresh() }) {
+                    IconButton(onClick = vm::refresh ) {
                         Icon(
                             painter = painterResource(id = R.drawable.outline_play_circle_24),
                             contentDescription = "Refresh library")
@@ -118,8 +113,8 @@ fun AudioClientApp(
 
                         TextButton(
                             onClick = {
-                                refresh()
-                                clearError()
+                                vm.refresh()
+                                vm.clearError()
                             })
                             { Text("Retry") }
                     }
@@ -141,7 +136,25 @@ fun AudioClientApp(
  * =============================================== */
 @Composable
 private fun PlayerScreen() {
+    EmptyPlayer()
+}
 
+@Composable
+private fun EmptyPlayer() {
+    Box(modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(
+                painter = painterResource(id = R.drawable.outline_album_24),
+                contentDescription = null,
+                Modifier.size(96.dp)
+            )
+            Spacer(Modifier.height(16.dp))
+            Text("Nothing playing", style = MaterialTheme.typography.headlineSmall)
+            Spacer(Modifier.height(8.dp))
+            Text("Choose a song or album from your library.")
+        }
+    }
 }
 
 @Composable

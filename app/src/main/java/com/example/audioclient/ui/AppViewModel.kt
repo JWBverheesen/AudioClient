@@ -16,4 +16,12 @@ class AppViewModel(
     private val _state = MutableStateFlow(AppState())
 
     val state: StateFlow<AppState> = _state.asStateFlow()
+
+    fun refresh() {
+
+    }
+
+    fun clearError() {
+        _state.value = _state.value.copy(error = null)
+    }
 }
