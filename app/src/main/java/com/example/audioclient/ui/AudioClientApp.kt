@@ -18,6 +18,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -26,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 
 import com.example.audioclient.R
 
@@ -41,7 +43,9 @@ fun clearError() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AudioClientApp(
+    vm: AppViewModel = viewModel()
 ) {
+    val state by vm.state.collectAsState()
 
     var tab by remember {
         mutableIntStateOf(1)
@@ -103,8 +107,7 @@ fun AudioClientApp(
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
 
-            //state.error?.let { error ->
-
+            state.error?.let { error ->
                 Card(modifier = Modifier.fillMaxWidth().padding(12.dp),
                      colors = CardDefaults.cardColors(containerColor =
                             MaterialTheme.colorScheme.errorContainer)) {
@@ -121,7 +124,7 @@ fun AudioClientApp(
                             { Text("Retry") }
                     }
                 }
-            //}
+            }
 
             when (tab) {
                 0 -> PlayerScreen()
