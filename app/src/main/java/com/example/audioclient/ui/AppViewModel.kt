@@ -7,7 +7,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 data class AppState(
-    val error: String? = null
+    val error: String? = null,
+    val serverUrl: String = ""
 )
 
 class AppViewModel(
@@ -24,4 +25,8 @@ class AppViewModel(
     fun clearError() {
         _state.value = _state.value.copy(error = null)
     }
+
+    // Fetch metadata from backend audio server
+    fun refreshMetadata() {}
+
 }
