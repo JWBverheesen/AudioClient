@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 import com.example.audioclient.R
+import com.example.audioclient.state.AppState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -57,7 +58,7 @@ fun AudioClientApp(
             TopAppBar(
                 title = { Text("Audio Server") },
                 actions = {
-                    IconButton(onClick = vm::refresh ) {
+                    IconButton(onClick = vm::refreshMetadata ) {
                         Icon(
                             painter = painterResource(id = R.drawable.outline_play_circle_24),
                             contentDescription = "Refresh library")
@@ -116,7 +117,7 @@ fun AudioClientApp(
 
                         TextButton(
                             onClick = {
-                                vm.refresh()
+                                vm.refreshMetadata()
                                 vm.clearError()
                             })
                             { Text("Retry") }
@@ -175,21 +176,16 @@ private fun SettingsScreen(
     state: AppState,
     vm: AppViewModel
 ) {
-    var server by remember(state.serverUrl) {
-        mutableStateOf(state.serverUrl)
-    }
     Column(modifier = Modifier.fillMaxWidth().padding((16.dp))) {
         Text(text="Server", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(12.dp))
 
-        OutlinedTextField(value = server,
-            onValueChange = {
-                server = it
-            },
+        OutlinedTextField(value = state.serverUrl,
+            onValueChange = vm::setServerUrl,
             modifier = Modifier.fillMaxWidth(),
             label = {Text("Audio Server URL")},
             supportingText = {
-                Text("Example: http:192.168.1.50:8080")},
+                Text("Example: http://192.168.1.50:8080")},
             singleLine = true)
         Spacer(Modifier.height(20.dp))
 
