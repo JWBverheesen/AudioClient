@@ -13,6 +13,7 @@ import kotlinx.coroutines.launch
 import com.example.audioclient.backend.AudioServer
 import com.example.audioclient.state.AppState
 import com.example.audioclient.backend.LocalStore
+import com.example.audioclient.backend.Track
 
 class AppViewModel(
     app: Application
@@ -20,10 +21,14 @@ class AppViewModel(
 /* ===============================================
  *  Member variables
  * =============================================== */
-    private val _state = MutableStateFlow(AppState())
+    private val store = LocalStore(app)
+    private val _state = MutableStateFlow(AppState(
+        library = store.loadLibrary(),
+        serverUrl = store.serverUrl(),
+        token = store.token()
+    ))
     val state: StateFlow<AppState> = _state.asStateFlow()
     val audioServer = AudioServer()
-    private val store = LocalStore(app)
 
     /* ===============================================
      *  Functions
@@ -31,6 +36,17 @@ class AppViewModel(
 
     fun clearError() {
         _state.value = _state.value.copy(error = null)
+    }
+
+    fun playAlbum(
+        tracks: List<Track>
+    ) {
+        Log.d("AudioServer", "Play album " + tracks[0].album)
+    }
+
+    fun playTrack(track: Track) {
+        // placeholder
+        Log.d("AudioServer", "Play track " + track.title)
     }
 
     // Fetch metadata from backend audio server
@@ -62,9 +78,10 @@ class AppViewModel(
         }
     }
 
-    fun setServerUrl(
-        url: String
-    ) {
+    fun setSearch(value: String) {
+        _state.value = _state.value.copy(search = value)
+    }
+    fun setServerUrl(url: String) {
         _state.update{ it.copy(serverUrl = url) }
     }
 }
