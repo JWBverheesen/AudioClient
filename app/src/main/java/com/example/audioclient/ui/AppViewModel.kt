@@ -28,7 +28,7 @@ class AppViewModel(
         token = store.token()
     ))
     val state: StateFlow<AppState> = _state.asStateFlow()
-    val audioServer = AudioServer()
+    val audioServer = AudioServer(app)
 
     /* ===============================================
      *  Functions
@@ -47,6 +47,27 @@ class AppViewModel(
     fun playTrack(track: Track) {
         // placeholder
         Log.d("AudioServer", "Play track " + track.title)
+
+        viewModelScope.launch {
+            _state.update { it.copy(loading = true, error = null) }
+            val state = _state.value
+
+            runCatching {
+                audioServer.playSong(
+                    track = track,
+                    serverUrl = state.serverUrl,
+                    token = state.token
+                )
+            }.onSuccess {
+                Log.d("AudioServer", "Now playing " + track.title)
+            }.onFailure { e ->
+                Log.e("AudioServer", "song request failed", e)
+                _state.update { it.copy(
+                    loading = false,
+                    error = "${e.javaClass.simpleName}: ${e.message}")
+                }
+            }
+        }
     }
 
     // Fetch metadata from backend audio server
@@ -56,7 +77,7 @@ class AppViewModel(
             val state = _state.value
 
             runCatching {
-                audioServer.refreshMetadata(
+                audioServer.getMetadata(
                     serverUrl = state.serverUrl,
                     token = state.token
                 )
@@ -83,5 +104,6 @@ class AppViewModel(
     }
     fun setServerUrl(url: String) {
         _state.update{ it.copy(serverUrl = url) }
+        store.setServerUrl(url)
     }
 }
