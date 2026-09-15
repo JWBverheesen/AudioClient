@@ -1,5 +1,6 @@
 package com.example.audioclient.backend
 
+import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -12,11 +13,9 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
 import androidx.core.net.toUri
 
 class AudioServer() {
-    private val json = Json { ignoreUnknownKeys = true }
     private val ramStore = RAMSongStore()
 
     private fun api(
@@ -34,8 +33,13 @@ class AudioServer() {
             api(serverUrl, token).fetchSong(track)
         }
 
+        // TODO() TMP LOGGING -> REMOVE
+        Log.d("AudioServer", "RAM ADD: $songId (${data.size} bytes)")
         // Store file in ram
         ramStore.add(songId,data)
+
+        // TODO() TMP LOGGING -> REMOVE
+        Log.d("AudioServer", "RAM COUNT: ${ramStore.size()}")
 
         // create mediaSource
         return createMediaSource(
@@ -88,6 +92,8 @@ class AudioServer() {
     }
 
     fun removeSongFromRam(songId: String) {
+        // TODO() TMP LOGGING -> REMOVE
+        Log.d("AudioServer", "RAM DELETE: $songId")
         ramStore.delete(songId)
     }
 
@@ -96,6 +102,9 @@ class AudioServer() {
     }
 
     fun clearRam() {
+        // TODO() TMP LOGGING -> REMOVE
+        Log.d("AudioServer", "RAM CLEAR: ${ramStore.size()} songs"
+        )
         ramStore.clear()
     }
 }

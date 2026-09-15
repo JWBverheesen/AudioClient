@@ -7,6 +7,8 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.media3.common.C
+import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
@@ -24,6 +26,9 @@ import com.example.audioclient.backend.PlaybackService
 import com.example.audioclient.backend.Track
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlin.time.Duration.Companion.milliseconds
 
 class AppViewModel(
     app: Application
@@ -40,8 +45,11 @@ class AppViewModel(
     val state: StateFlow<AppState> = _state.asStateFlow()
     private var mediaController: MediaController? = null
     private var controllerFuture: ListenableFuture<MediaController>? = null
-
     private val metadataServer = MetadataServer()
+    // Playback state variables
+    private val _playbackState = MutableStateFlow(PlaybackState())
+    val playbackState: StateFlow<PlaybackState> = _playbackState.asStateFlow()
+    private var positionUpdateJob: Job? = null
 
     init {
         connectToPlaybackService()
@@ -64,6 +72,9 @@ class AppViewModel(
                 {
                     try {
                         mediaController = future.get()
+                        mediaController?.addListener(playbackListener)
+                        startPositionUpdates()
+                        updatePlaybackState()
                         Log.d("AudioServer", "Connected to PlaybackService")
                     } catch (e: Exception) {
                         Log.e("AudioServer", "Failed to connect to PlaybackService", e)
@@ -80,7 +91,16 @@ class AppViewModel(
         }
     }
 
-    //==================================OLD CODE BELOW!
+    private fun startPositionUpdates() {
+        positionUpdateJob?.cancel()
+        positionUpdateJob =
+            viewModelScope.launch {
+                while (true) {
+                    updatePlaybackState()
+                    delay(250L.milliseconds)
+                }
+            }
+    }
 
     /* ===============================================
      *  State functions
@@ -97,11 +117,29 @@ class AppViewModel(
         _state.update{ it.copy(serverUrl = url) }
         store.setServerUrl(url)
     }
+    private fun updatePlaybackState() {
 
+        val controller = mediaController ?: return
+        val mediaItem = controller.currentMediaItem
+        val metadata = mediaItem?.mediaMetadata
+        val duration = controller.duration
+
+        _playbackState.value = PlaybackState(
+            isPlaying = controller.isPlaying,
+            isBuffering = controller.playbackState == Player.STATE_BUFFERING,
+            currentSongId = mediaItem?.mediaId,
+            title = metadata?.title?.toString(),
+            artist = metadata?.artist?.toString(),
+            album = metadata?.albumTitle?.toString(),
+            positionMs = controller.currentPosition,
+            durationMs = if (duration != C.TIME_UNSET && duration >= 0L) { duration } else { 0L },
+            shuffleEnabled = controller.shuffleModeEnabled,
+            repeatMode = controller.repeatMode
+        )
+    }
     /* ===============================================
     *  Playback
     * =============================================== */
-
     fun playTrack(track: Track) {
 
         val controller = mediaController
@@ -152,6 +190,39 @@ class AppViewModel(
         Log.d("AudioServer", "Play album " + tracks[0].album)
     }
 
+    private val playbackListener =
+        object : Player.Listener {
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                updatePlaybackState()
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                updatePlaybackState()
+            }
+
+            override fun onMediaItemTransition(
+                mediaItem: androidx.media3.common.MediaItem?,
+                reason: Int
+            ) {
+                updatePlaybackState()
+            }
+
+            override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+                updatePlaybackState()
+            }
+
+            override fun onRepeatModeChanged(repeatMode: Int) {
+                updatePlaybackState()
+            }
+
+            override fun onPlayerError(e: androidx.media3.common.PlaybackException) {
+                Log.e("AudioServer", "Playback error: ${e.errorCodeName}", e)
+                _state.update { it.copy(error = "${e.errorCodeName}: ${e.message}") }
+                updatePlaybackState()
+            }
+        }
+
     /* ===============================================
     *  Metadata
     * =============================================== */
@@ -188,8 +259,11 @@ class AppViewModel(
     * =============================================== */
 
     override fun onCleared() {
-        Log.d("AudioServer", "Cleaning up resources")
-        // Release mediaController, disconnect viewmodel from service
+        Log.d("AudioServer", "ViewModel cleared")
+
+        positionUpdateJob?.cancel()
+        positionUpdateJob = null
+        mediaController?.removeListener(playbackListener)
         mediaController?.release()
         mediaController = null
         controllerFuture?.let{ MediaController.releaseFuture(it) }

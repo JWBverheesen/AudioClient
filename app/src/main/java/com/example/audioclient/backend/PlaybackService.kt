@@ -2,6 +2,7 @@ package com.example.audioclient.backend
 
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import androidx.annotation.OptIn
 
 import androidx.media3.common.AudioAttributes
@@ -34,6 +35,7 @@ class PlaybackService : MediaSessionService() {
         const val EXTRA_TRACK_ARTIST = "track_artist"
         const val EXTRA_TRACK_ALBUM = "track_album"
     }
+    private var currentSongId: String ?= null
     private lateinit var player: ExoPlayer
     private lateinit var mediaSession: MediaSession
     private lateinit var audioServer: AudioServer
@@ -108,12 +110,21 @@ class PlaybackService : MediaSessionService() {
                     // when implement the queue.
                 }
 
-                override fun onPlaybackStateChanged(
-                    playbackState: Int
-                ) {
-                    if (playbackState == Player.STATE_ENDED) {
-                        // Final RAM cleanup will be handled here.
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    if (playbackState != Player.STATE_ENDED) {
+                        return
                     }
+
+                    if (player.repeatMode == Player.REPEAT_MODE_ONE) {
+                        return
+                    }
+
+                    val songId = currentSongId ?: return
+                    audioServer.removeSongFromRam(songId)
+                    Log.d("AudioServer", "RAM DELETE after playback: $songId"
+                    )
+
+                    currentSongId = null
                 }
             }
         )
@@ -125,7 +136,6 @@ class PlaybackService : MediaSessionService() {
         val serverUrl = args.getString(EXTRA_SERVER_URL) ?: return
         val token = args.getString(EXTRA_TOKEN) ?: ""
         val filename = args.getString(EXTRA_TRACK_FILENAME) ?: return
-        val title = args.getString(EXTRA_TRACK_TITLE) ?: filename
         val artist = args.getString(EXTRA_TRACK_ARTIST) ?: ""
         val album = args.getString(EXTRA_TRACK_ALBUM) ?: ""
 
@@ -137,15 +147,26 @@ class PlaybackService : MediaSessionService() {
 
         serviceScope.launch {
             try {
+                // Download new song
                 val mediaSource = audioServer.playSong(
                     track = track,
                     serverUrl = serverUrl,
                     token = token
                 )
 
+                val oldSongId = currentSongId
+                player.clearMediaItems()
+                // Removing the old MediaItem releases the player's reference to its old MediaSource/DataSource.
+                if(oldSongId != null) {
+                    audioServer.removeSongFromRam(oldSongId)
+                }
+                currentSongId = filename
+
                 player.setMediaSource(mediaSource)
                 player.prepare()
                 player.play()
+
+                Log.d("AudioServer", "RAM songs: ${audioServer.ramSongCount()}")
 
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -170,6 +191,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        Log.d("PlaybackService", "Cleaning up resources")
         serviceScope.coroutineContext.cancel()
         audioServer.clearRam()
         mediaSession.release()
