@@ -7,6 +7,7 @@ import androidx.annotation.OptIn
 
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
@@ -55,6 +56,54 @@ class PlaybackService : MediaSessionService() {
     private val nextTrackCommand = SessionCommand(COMMAND_NEXT_TRACK, Bundle.EMPTY)
     private val playAlbumCommand = SessionCommand(COMMAND_PLAY_ALBUM, Bundle.EMPTY)
 
+    // Wrapper around exoplayer to properly expose android play/seek/next
+    @UnstableApi
+    private inner class AlbumForwardingPlayer(
+        private val delegate: Player
+    ) : ForwardingPlayer(delegate) {
+        override fun getAvailableCommands(): Player.Commands {
+            val commands = super.getAvailableCommands().buildUpon()
+            if (hasNextAlbumTrack()) {
+                commands.add(Player.COMMAND_SEEK_TO_NEXT)
+            } else {
+                commands.remove(Player.COMMAND_SEEK_TO_NEXT)
+            }
+            return commands.build()
+        }
+
+        override fun isCommandAvailable(command: Int): Boolean {
+            return if (command == Player.COMMAND_SEEK_TO_NEXT) {
+                hasNextAlbumTrack()
+            } else {
+                super.isCommandAvailable(command)
+            }
+        }
+
+        override fun seekToNext() {
+            if (!hasNextAlbumTrack() || isAdvancingAlbum) {
+                return
+            }
+
+            val nextIndex = currentAlbumIndex + 1
+
+            isAdvancingAlbum = true
+
+            playbackJob?.cancel()
+            playbackJob = serviceScope.launch {
+                try {
+                    playAlbumTrack(nextIndex)
+                } finally {
+                    isAdvancingAlbum = false
+                }
+            }
+        }
+        private fun hasNextAlbumTrack(): Boolean {
+            return albumTracks.isNotEmpty() &&
+                    currentAlbumIndex + 1 < albumTracks.size
+        }
+    }
+
+    @OptIn(UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
 
@@ -69,6 +118,8 @@ class PlaybackService : MediaSessionService() {
                 true
             )
             .build()
+
+        val forwardingPlayer = AlbumForwardingPlayer(player)
 
         val callback = object : MediaSession.Callback {
 
@@ -120,7 +171,7 @@ class PlaybackService : MediaSessionService() {
             }
         }
 
-        mediaSession = MediaSession.Builder(applicationContext, player)
+        mediaSession = MediaSession.Builder(applicationContext, forwardingPlayer)
             .setCallback(callback)
             .build()
 
@@ -310,39 +361,37 @@ class PlaybackService : MediaSessionService() {
     }
 
     @OptIn(UnstableApi::class)
-    private fun playAlbumTrack(index: Int) {
+    private suspend fun playAlbumTrack(index: Int) {
         if (index !in albumTracks.indices) {
             return
         }
 
         val track = albumTracks[index]
 
-        serviceScope.launch {
-            try {
-                val mediaSource = audioServer.playSong(
-                    track = track,
-                    serverUrl = albumServerUrl,
-                    token = albumToken
-                )
+        try {
+            val mediaSource = audioServer.playSong(
+                track = track,
+                serverUrl = albumServerUrl,
+                token = albumToken
+            )
 
-                val oldSongId = currentSongId
-                player.clearMediaItems()
+            val oldSongId = currentSongId
+            player.clearMediaItems()
 
-                if (oldSongId != null && oldSongId != track.filename) {
-                    audioServer.removeSongFromRam(oldSongId)
-                }
-
-                currentSongId = track.filename
-                currentAlbumIndex = index
-
-                player.setMediaSource(mediaSource)
-                player.prepare()
-                player.play()
-
-                Log.d("AudioServer", "Album track ${index + 1}/${albumTracks.size}: ${track.title}")
-            } catch (e: Exception) {
-                Log.e("AudioServer", "Failed to play album track: ${track.filename}", e)
+            if (oldSongId != null && oldSongId != track.filename) {
+                audioServer.removeSongFromRam(oldSongId)
             }
+
+            currentSongId = track.filename
+            currentAlbumIndex = index
+
+            player.setMediaSource(mediaSource)
+            player.prepare()
+            player.play()
+
+            Log.d("AudioServer", "Album track ${index + 1}/${albumTracks.size}: ${track.title}")
+        } catch (e: Exception) {
+            Log.e("AudioServer", "Failed to play album track: ${track.filename}", e)
         }
     }
 
