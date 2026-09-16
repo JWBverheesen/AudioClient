@@ -4,8 +4,6 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
-apply(plugin = "kotlin-parcelize")
-
 android {
     namespace = "com.example.audioclient"
     compileSdk {

@@ -55,7 +55,7 @@ class PlaybackService : MediaSessionService() {
     private val playTrackCommand = SessionCommand(COMMAND_PLAY_TRACK, Bundle.EMPTY)
     private val nextTrackCommand = SessionCommand(COMMAND_NEXT_TRACK, Bundle.EMPTY)
     private val playAlbumCommand = SessionCommand(COMMAND_PLAY_ALBUM, Bundle.EMPTY)
-
+    private val previousRestartPositionMs = 3_000L
     // Wrapper around exoplayer to properly expose android play/seek/next
     @UnstableApi
     private inner class AlbumForwardingPlayer(
@@ -64,18 +64,22 @@ class PlaybackService : MediaSessionService() {
         override fun getAvailableCommands(): Player.Commands {
             val commands = super.getAvailableCommands().buildUpon()
             if (hasNextAlbumTrack()) {
-                commands.add(Player.COMMAND_SEEK_TO_NEXT)
+                commands.add(COMMAND_SEEK_TO_NEXT)
             } else {
-                commands.remove(Player.COMMAND_SEEK_TO_NEXT)
+                commands.remove(COMMAND_SEEK_TO_NEXT)
+            }
+            // Previous is available while playing an album.
+            if (albumTracks.isNotEmpty()) {
+                commands.add(COMMAND_SEEK_TO_PREVIOUS)
             }
             return commands.build()
         }
 
         override fun isCommandAvailable(command: Int): Boolean {
-            return if (command == Player.COMMAND_SEEK_TO_NEXT) {
-                hasNextAlbumTrack()
-            } else {
-                super.isCommandAvailable(command)
+            return when (command) {
+                Player.COMMAND_SEEK_TO_NEXT -> hasNextAlbumTrack()
+                Player.COMMAND_SEEK_TO_PREVIOUS -> albumTracks.isNotEmpty()
+                else -> super.isCommandAvailable(command)
             }
         }
 
@@ -97,9 +101,37 @@ class PlaybackService : MediaSessionService() {
                 }
             }
         }
+
+        override fun seekToPrevious() {
+            if (albumTracks.isEmpty() || isAdvancingAlbum) {
+                return
+            }
+
+            if (currentPosition > previousRestartPositionMs) {
+                seekTo(0L)
+                return
+            }
+
+            val previousIndex = currentAlbumIndex - 1
+            if (previousIndex < 0) {
+                // Already at the first track. Just restart it.
+                seekTo(0L)
+                return
+            }
+
+            isAdvancingAlbum = true
+
+            playbackJob?.cancel()
+            playbackJob = serviceScope.launch {
+                try {
+                    playAlbumTrack(previousIndex)
+                } finally {
+                    isAdvancingAlbum = false
+                }
+            }
+        }
         private fun hasNextAlbumTrack(): Boolean {
-            return albumTracks.isNotEmpty() &&
-                    currentAlbumIndex + 1 < albumTracks.size
+            return albumTracks.isNotEmpty() && currentAlbumIndex + 1 < albumTracks.size
         }
     }
 
