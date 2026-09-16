@@ -28,6 +28,7 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.serialization.json.Json
 import kotlin.time.Duration.Companion.milliseconds
 
 class AppViewModel(
@@ -50,6 +51,8 @@ class AppViewModel(
     private val _playbackState = MutableStateFlow(PlaybackState())
     val playbackState: StateFlow<PlaybackState> = _playbackState.asStateFlow()
     private var positionUpdateJob: Job? = null
+
+    private val json = Json { ignoreUnknownKeys = true }
 
     init {
         connectToPlaybackService()
@@ -187,7 +190,31 @@ class AppViewModel(
     }
 
     fun playAlbum(tracks: List<Track>) {
-        Log.d("AudioServer", "Play album " + tracks[0].album)
+        val controller = mediaController
+
+        if (controller == null) {
+            Log.w("AudioServer", "MediaController is not connected yet")
+            _state.update { it.copy(error = "Playback service is not connected") }
+            return
+        }
+
+        if (tracks.isEmpty()) {
+            return
+        }
+
+        val currentState = _state.value
+
+        val extras = Bundle().apply {
+            putString(PlaybackService.EXTRA_SERVER_URL, currentState.serverUrl)
+            putString(PlaybackService.EXTRA_TOKEN, currentState.token)
+            putString(PlaybackService.EXTRA_ALBUM_TRACKS, json.encodeToString(tracks))
+        }
+
+        val command = SessionCommand(PlaybackService.COMMAND_PLAY_ALBUM, Bundle.EMPTY)
+        controller.sendCustomCommand(command, extras)
+
+        Log.d("AudioServer", "Requested album playback: ${tracks.first().album}"
+        )
     }
 
     private val playbackListener =

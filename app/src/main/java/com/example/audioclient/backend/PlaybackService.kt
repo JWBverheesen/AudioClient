@@ -19,29 +19,41 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
 
 class PlaybackService : MediaSessionService() {
 
     companion object {
         const val COMMAND_PLAY_TRACK = "com.example.audioclient.PLAY_TRACK"
+        const val COMMAND_NEXT_TRACK = "com.example.audioclient.NEXT_TRACK"
         const val EXTRA_SERVER_URL = "server_url"
         const val EXTRA_TOKEN = "token"
-
         const val EXTRA_TRACK_FILENAME = "track_filename"
         const val EXTRA_TRACK_TITLE = "track_title"
         const val EXTRA_TRACK_ARTIST = "track_artist"
         const val EXTRA_TRACK_ALBUM = "track_album"
+        const val COMMAND_PLAY_ALBUM = "com.example.audioclient.PLAY_ALBUM"
+        const val EXTRA_ALBUM_TRACKS = "album_tracks"
     }
     private var currentSongId: String ?= null
+    private var albumTracks: List<Track> = emptyList()
+    private var isAdvancingAlbum = false
+    private var playbackJob: Job? = null
+    private var currentAlbumIndex = 0
+    private var albumServerUrl: String = ""
+    private var albumToken: String = ""
     private lateinit var player: ExoPlayer
     private lateinit var mediaSession: MediaSession
     private lateinit var audioServer: AudioServer
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val playTrackCommand = SessionCommand(COMMAND_PLAY_TRACK, Bundle.EMPTY)
+    private val nextTrackCommand = SessionCommand(COMMAND_NEXT_TRACK, Bundle.EMPTY)
+    private val playAlbumCommand = SessionCommand(COMMAND_PLAY_ALBUM, Bundle.EMPTY)
 
     override fun onCreate() {
         super.onCreate()
@@ -70,6 +82,8 @@ class PlaybackService : MediaSessionService() {
                     MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS
                         .buildUpon()
                         .add(playTrackCommand)
+                        .add(playAlbumCommand)
+                        .add(nextTrackCommand)
                         .build()
 
                 return MediaSession.ConnectionResult
@@ -84,14 +98,25 @@ class PlaybackService : MediaSessionService() {
                 customCommand: SessionCommand,
                 args: Bundle
             ): ListenableFuture<SessionResult> {
+                return when (customCommand.customAction) {
+                    COMMAND_PLAY_TRACK -> {
+                        playTrack(args)
+                        Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                    }
+                    COMMAND_PLAY_ALBUM -> {
+                        playAlbum(args)
+                        Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                    }
+                    COMMAND_NEXT_TRACK -> {
+                        playNextTrack()
+                        Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
+                    }
 
-                if (customCommand.customAction != COMMAND_PLAY_TRACK) {
-                    return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
+                    else -> {
+                        Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED)
+                        )
+                    }
                 }
-
-                playTrack(args)
-                return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS)
-                )
             }
         }
 
@@ -115,16 +140,53 @@ class PlaybackService : MediaSessionService() {
                         return
                     }
 
+                    // Single-track playback.
+                    if (albumTracks.isEmpty()) {
+                        Log.d("AudioServer", "Single track finished: $currentSongId")
+                        return
+                    }
+
+                    // Album playback.
                     if (player.repeatMode == Player.REPEAT_MODE_ONE) {
                         return
                     }
 
-                    val songId = currentSongId ?: return
-                    audioServer.removeSongFromRam(songId)
-                    Log.d("AudioServer", "RAM DELETE after playback: $songId"
-                    )
+                    // Prevent duplicate STATE_ENDED callbacks from starting multiple downloads of the same track.
+                    if (isAdvancingAlbum) {
+                        Log.d("AudioServer", "Ignoring duplicate album advancement")
+                        return
+                    }
 
-                    currentSongId = null
+                    val nextIndex = currentAlbumIndex + 1
+                    if (nextIndex < albumTracks.size) {
+                        isAdvancingAlbum = true
+                        Log.d("AudioServer", "Album advancing: ${nextIndex + 1}/${albumTracks.size}")
+
+                        playbackJob?.cancel()
+                        playbackJob = serviceScope.launch {
+                            try {
+                                playAlbumTrack(nextIndex)
+                            } finally {
+                                isAdvancingAlbum = false
+                            }
+                        }
+                    } else {
+                        Log.d("AudioServer", "Album finished")
+
+                        val songId = currentSongId
+                        if (songId != null) {
+                            audioServer.removeSongFromRam(songId)
+                        }
+
+                        currentSongId = null
+                        albumTracks = emptyList()
+                        currentAlbumIndex = 0
+                        albumServerUrl = ""
+                        albumToken = ""
+                        isAdvancingAlbum = false
+
+                        Log.d("AudioServer", "RAM songs after album finished: " + audioServer.ramSongCount())
+                    }
                 }
             }
         )
@@ -145,6 +207,17 @@ class PlaybackService : MediaSessionService() {
             album = album
         )
 
+        /* The user explicitly selected a single track. This cancels any album transition
+           that might still be downloading a track in the background.*/
+        playbackJob?.cancel()
+
+        isAdvancingAlbum = false
+
+        albumTracks = emptyList()
+        currentAlbumIndex = 0
+        albumServerUrl = ""
+        albumToken = ""
+
         serviceScope.launch {
             try {
                 // Download new song
@@ -157,7 +230,7 @@ class PlaybackService : MediaSessionService() {
                 val oldSongId = currentSongId
                 player.clearMediaItems()
                 // Removing the old MediaItem releases the player's reference to its old MediaSource/DataSource.
-                if(oldSongId != null) {
+                if(oldSongId != null && oldSongId != filename) {
                     audioServer.removeSongFromRam(oldSongId)
                 }
                 currentSongId = filename
@@ -170,6 +243,105 @@ class PlaybackService : MediaSessionService() {
 
             } catch (e: Exception) {
                 e.printStackTrace()
+            }
+        }
+    }
+
+    private fun playNextTrack() {
+        // For now, ext only makes sense for an album.
+        // Single-track shuffle will be added later
+        if(albumTracks.isEmpty()) {
+            Log.d("AudioServer", "Next requested, but no album is being played")
+            return
+        }
+
+        if(isAdvancingAlbum) {
+            Log.d("AudioServer", "Next ignored: album transition already in progress")
+            return
+        }
+
+        val nextItem = currentAlbumIndex+1
+        if(nextItem >= albumTracks.size) {
+            Log.d("AudioServer", "Next requested at end of album")
+            return
+        }
+        isAdvancingAlbum = true
+        playbackJob?.cancel()
+        playbackJob = serviceScope.launch {
+            try {
+                playAlbumTrack(nextItem)
+            } finally {
+                isAdvancingAlbum = false
+            }
+        }
+    }
+
+    @OptIn(UnstableApi::class)
+    private fun playAlbum(args: Bundle) {
+        val serverUrl = args.getString(EXTRA_SERVER_URL) ?: return
+        val token = args.getString(EXTRA_TOKEN) ?: ""
+        val tracksJson = args.getString(EXTRA_ALBUM_TRACKS) ?: return
+
+        val tracks = try {
+            Json.decodeFromString<List<Track>>(tracksJson)
+        } catch (e: Exception) {
+            Log.e("AudioServer", "Failed to decode album tracks", e)
+            return
+        }
+
+        if (tracks.isEmpty()) {
+            return
+        }
+
+        /* The user explicitly selected a new album. Cancel any previous song/album
+        download so an old operation cannot later replace this album track. */
+        playbackJob?.cancel()
+
+        isAdvancingAlbum = false
+
+        albumTracks = tracks
+        albumServerUrl = serverUrl
+        albumToken = token
+        currentAlbumIndex = 0
+
+        playbackJob = serviceScope.launch {
+            playAlbumTrack(0)
+        }
+    }
+
+    @OptIn(UnstableApi::class)
+    private fun playAlbumTrack(index: Int) {
+        if (index !in albumTracks.indices) {
+            return
+        }
+
+        val track = albumTracks[index]
+
+        serviceScope.launch {
+            try {
+                val mediaSource = audioServer.playSong(
+                    track = track,
+                    serverUrl = albumServerUrl,
+                    token = albumToken
+                )
+
+                val oldSongId = currentSongId
+                player.clearMediaItems()
+
+                if (oldSongId != null && oldSongId != track.filename) {
+                    audioServer.removeSongFromRam(oldSongId)
+                }
+
+                currentSongId = track.filename
+                currentAlbumIndex = index
+
+                player.setMediaSource(mediaSource)
+                player.prepare()
+                player.play()
+
+                Log.d("AudioServer", "Album track ${index + 1}/${albumTracks.size}: ${track.title}")
+            } catch (e: Exception) {
+                Log.e("AudioServer", "Failed to play album track: ${track.filename}", e)
             }
         }
     }
