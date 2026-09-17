@@ -4,10 +4,12 @@ import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -27,6 +29,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -34,6 +37,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -135,7 +139,7 @@ fun AudioClientApp(
             }
 
             when (tab) {
-                0 -> PlayerScreen()
+                0 -> PlayerScreen(vm = vm)
                 1 -> LibraryScreen(state = state, vm = vm)
                 2 -> QueueScreen()
                 else -> SettingsScreen(state = state, vm = vm)
@@ -148,27 +152,169 @@ fun AudioClientApp(
  *  Navigator bar items
  * =============================================== */
 @Composable
-private fun PlayerScreen() {
+private fun PlayerScreen(
+    vm: AppViewModel
+) {
     Log.d("AudioClient:", "Opening player screen")
-    EmptyPlayer()
-}
+    //EmptyPlayer()
 
-@Composable
-private fun EmptyPlayer() {
-    Box(modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(
-                painter = painterResource(id = R.drawable.outline_album_24),
-                contentDescription = null,
-                Modifier.size(96.dp)
-            )
-            Spacer(Modifier.height(16.dp))
-            Text("Nothing playing", style = MaterialTheme.typography.headlineSmall)
-            Spacer(Modifier.height(8.dp))
-            Text("Choose a song or album from your library.")
+    // take state from viewmodel state
+    val playbackState by vm.playbackState.collectAsState()
+
+    var isSeeking by remember { mutableStateOf(false) }
+    var seekPosition by remember { mutableFloatStateOf(0f) }
+
+    // Get from viewmodel or state
+    val title = playbackState.title ?: "Nothing playing"
+    val artist = playbackState.artist.orEmpty()
+    val album = playbackState.album.orEmpty()
+
+    val position = playbackState.positionMs
+    val duration = playbackState.durationMs
+
+    val progress = if (duration > 0L) {
+        if (isSeeking) {
+            seekPosition
+        } else {
+            (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+        }
+    } else { 0f }
+
+    val isPlaying = playbackState.isPlaying
+    val shuffleOn = playbackState.shuffleEnabled
+
+    Column(modifier = Modifier.fillMaxSize().padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally) {
+        Spacer(Modifier.height(10.dp))
+        // placeholder album artwork
+        Surface(modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(1f)
+            .padding(horizontal = 24.dp),
+            shape = MaterialTheme.shapes.large,
+            tonalElevation = 8.dp) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    painter = painterResource(id = R.drawable.outline_album_24),
+                    contentDescription = null,
+                    Modifier.size(160.dp)
+                )
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Text(text = title, style = MaterialTheme.typography.headlineSmall, maxLines = 1)
+        Spacer(Modifier.height(4.dp))
+
+        Text(text = listOf(artist, album).filter { it.isNotBlank() }.joinToString(" • "),
+            style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+
+        Spacer(Modifier.height(10.dp))
+
+        Slider(
+            value = progress,
+            onValueChange = { value ->
+                if (duration > 0) {
+                    isSeeking = true
+                    seekPosition = value
+                }
+            },
+            onValueChangeFinished = {
+                if (duration > 0L) {
+                    val newPosition = (seekPosition * duration).toLong().coerceIn(0L, duration)
+                    vm.seekTo(newPosition)
+                }
+                isSeeking = false
+            }, modifier = Modifier.fillMaxWidth()
+        )
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(formatTime(position), style = MaterialTheme.typography.bodySmall)
+            Text(formatTime(duration), style = MaterialTheme.typography.bodySmall)
+        }
+
+        Spacer(Modifier.height(20.dp))
+        // main controls
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // shuffle
+            IconButton(
+                onClick = { vm.toggleShuffle() },
+                modifier = Modifier.size(64.dp)
+            ) {
+                if(shuffleOn) {
+                    Icon(painter = painterResource(id = R.drawable.outline_shuffle_on_24),
+                        contentDescription = "shuffle")
+                } else {
+                    Icon(painter = painterResource(id = R.drawable.outline_shuffle_24),
+                        contentDescription = "shuffle")
+                }
+            }
+            // previous
+            IconButton(
+                onClick = { vm.previousTrack() },
+                modifier = Modifier.size(64.dp)
+            ) {
+                Icon(painter = painterResource(id = R.drawable.outline_skip_previous_24),
+                    contentDescription = "Previous track")
+            }
+            // play/pause
+            IconButton(
+                onClick = { vm.togglePlayPause() },
+                modifier = Modifier.size(64.dp)
+            ) {
+                if(isPlaying) {
+                    Icon(painter = painterResource(id = R.drawable.outline_pause_24),
+                        contentDescription = "pause")
+                } else {
+                    Icon(painter = painterResource(id = R.drawable.outline_play_arrow_24),
+                        contentDescription = "play")
+                }
+            }
+            //next
+            IconButton(
+                onClick = { vm.nextTrack() },
+                modifier = Modifier.size(64.dp)
+            ) {
+                Icon(painter = painterResource(id = R.drawable.outline_skip_next_24),
+                    contentDescription = "Next track")
+            }
+            //add to favorites
+            IconButton(
+                onClick = { /*TODO() -> VM add to favorites */ },
+                modifier = Modifier.size(64.dp)
+            ) {
+                Icon(painter = painterResource(id = R.drawable.outline_add_circle_outline_24),
+                    contentDescription = "favorites")
+            }
         }
     }
+}
+
+// TODO() is this needed?
+private fun formatTime(
+    milliseconds: Long
+): String {
+    if (milliseconds <= 0) {
+        return "0:00"
+    }
+
+    val totalSeconds =
+        milliseconds / 1000
+
+    val minutes =
+        totalSeconds / 60
+
+    val seconds =
+        totalSeconds % 60
+
+    return "%d:%02d".format(
+        minutes,
+        seconds
+    )
 }
 
 @Composable

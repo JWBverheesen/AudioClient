@@ -282,6 +282,54 @@ class AppViewModel(
     }
 
     /* ===============================================
+    *  Playback controls
+    * =============================================== */
+    fun togglePlayPause() {
+        val controller = mediaController?: return
+        if(controller.isPlaying) {
+            controller.pause()
+        } else {
+            controller.play()
+        }
+    }
+
+    fun play() {
+        mediaController?.play()
+    }
+
+    fun pause() {
+        mediaController?.pause()
+    }
+
+    fun nextTrack() {
+        val controller = mediaController ?: return
+
+        // We use a custom command for next
+        val command = SessionCommand(PlaybackService.COMMAND_NEXT_TRACK, Bundle.EMPTY)
+        controller.sendCustomCommand(command, Bundle.EMPTY)
+    }
+
+    fun previousTrack() {
+        val controller = mediaController?:return
+        if(controller.isCommandAvailable(Player.COMMAND_SEEK_TO_PREVIOUS))
+            controller.seekToPrevious()
+    }
+
+    fun seekTo(positionMs: Long) {
+        val controller = mediaController?:return
+        controller.seekTo(positionMs)
+    }
+
+    fun toggleShuffle() {
+        val controller = mediaController?:return
+        controller.shuffleModeEnabled = !controller.shuffleModeEnabled
+    }
+
+    fun setShuffleEnabled(enabled: Boolean) {
+        mediaController?.shuffleModeEnabled = enabled
+    }
+
+    /* ===============================================
     *  Cleanup
     * =============================================== */
 

@@ -192,7 +192,7 @@ class PlaybackService : MediaSessionService() {
                     }
                     COMMAND_NEXT_TRACK -> {
                         playNextTrack()
-                        Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
+                        Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                     }
 
                     else -> {
